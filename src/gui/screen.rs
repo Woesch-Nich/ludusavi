@@ -380,6 +380,16 @@ pub fn other<'a>(
                         ))
                         .push(button::open_url_icon(RELEASE_URL.to_string())),
                 )
+                .push_if(config.release.check, || {
+                    Row::new()
+                        .align_y(iced::Alignment::Center)
+                        .spacing(20)
+                        .push(checkbox(
+                            TRANSLATOR.install_updates_automatically(),
+                            config.release.auto_install,
+                            Message::config(config::Event::AutoInstallRelease),
+                        ))
+                })
                 .push(
                     Column::new().spacing(5).push(text(TRANSLATOR.scan_field())).push(
                         Container::new(

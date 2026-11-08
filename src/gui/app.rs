@@ -117,6 +117,9 @@ pub struct App {
     modifiers: keyboard::Modifiers,
     jump_to_game_after_scan: Option<String>,
     os_schedule_active: bool,
+    pending_update: Option<crate::metadata::ForkRelease>,
+    staged_update: Option<crate::gui::update::StagedUpdate>,
+    downloading_update: bool,
 }
 
 impl App {
@@ -292,6 +295,43 @@ impl App {
         }
 
         Ok(())
+    }
+
+    fn begin_update(&mut self, release: crate::metadata::ForkRelease) -> Task<Message> {
+        if self.downloading_update {
+            return Task::none();
+        }
+        if !self.operation.idle() || !self.modals.is_empty() {
+            // Never interrupt a backup/restore; retry once the app is idle.
+            self.pending_update = Some(release);
+            return Task::none();
+        }
+        self.downloading_update = true;
+        self.timed_notification = Some(Notification::new(TRANSLATOR.downloading_update(&release.tag)));
+        let security = self.config.runtime.network_security;
+        Task::perform(
+            async move { crate::gui::update::download_and_stage(&release, security).await },
+            Message::UpdateStaged,
+        )
+    }
+
+    fn try_apply_staged_update(&mut self) -> Task<Message> {
+        if !self.operation.idle() || !self.modals.is_empty() {
+            return Task::none();
+        }
+        let Some(staged) = self.staged_update.take() else {
+            return Task::none();
+        };
+        self.timed_notification = Some(Notification::new(TRANSLATOR.update_restarting(&staged.tag)));
+        self.save();
+        match crate::gui::update::apply_and_restart(&staged) {
+            Ok(()) => std::process::exit(0),
+            Err(e) => {
+                log::warn!("Update install failed: {e}");
+                self.timed_notification = Some(Notification::new(TRANSLATOR.update_failed(&e)).expires(30));
+                Task::none()
+            }
+        }
     }
 
     fn sync_os_schedule(&mut self) {
@@ -1496,7 +1536,7 @@ impl App {
 
         if config.release.check && cache.should_check_app_update() {
             commands.push(Task::future(async move {
-                let result = crate::metadata::Release::fetch(config.runtime.network_security).await;
+                let result = crate::metadata::ForkRelease::fetch(config.runtime.network_security).await;
 
                 Message::AppReleaseChecked(result.map_err(|x| x.to_string()))
             }))
@@ -1618,6 +1658,9 @@ impl App {
                     }
                     config::Event::CheckRelease(enabled) => {
                         self.config.release.check = enabled;
+                    }
+                    config::Event::AutoInstallRelease(enabled) => {
+                        self.config.release.auto_install = enabled;
                     }
                     config::Event::BackupTarget(text) => {
                         self.text_histories.backup_target.push(&text);
@@ -2103,24 +2146,34 @@ impl App {
                 let security = self.config.runtime.network_security;
 
                 Task::future(async move {
-                    let result = crate::metadata::Release::fetch(security).await;
+                    let result = crate::metadata::ForkRelease::fetch(security).await;
 
                     Message::AppReleaseChecked(result.map_err(|x| x.to_string()))
                 })
             }
             Message::AppReleaseChecked(outcome) => {
-                self.save_cache();
                 self.cache.release.checked = chrono::offset::Utc::now();
 
                 match outcome {
                     Ok(release) => {
                         let previous_latest = self.cache.release.latest.clone();
-                        self.cache.release.latest = Some(release.version.clone());
+                        let version = release.semver();
+                        self.cache.release.latest = Some(version.clone());
+                        self.save_cache();
 
-                        if previous_latest.as_ref() != Some(&release.version) {
-                            // The latest available version has changed (or this is our first time checking)
-                            if release.is_update() {
-                                return self.show_modal(Modal::AppUpdate { release });
+                        if release.is_update() {
+                            if self.config.release.auto_install
+                                && cfg!(target_os = "windows")
+                                && release.sha256_url.is_some()
+                            {
+                                return self.begin_update(release);
+                            }
+                            if previous_latest.as_ref() != Some(&version) {
+                                let manual = crate::metadata::Release {
+                                    version,
+                                    url: release.url.clone(),
+                                };
+                                return self.show_modal(Modal::AppUpdate { release: manual });
                             }
                         }
                     }
@@ -2129,6 +2182,33 @@ impl App {
                     }
                 }
 
+                Task::none()
+            }
+            Message::UpdateStaged(outcome) => {
+                self.downloading_update = false;
+                match outcome {
+                    Ok(staged) => {
+                        self.staged_update = Some(staged);
+                        self.try_apply_staged_update()
+                    }
+                    Err(e) => {
+                        log::warn!("Update download failed: {e}");
+                        self.timed_notification =
+                            Some(Notification::new(TRANSLATOR.update_failed(&e)).expires(30));
+                        Task::none()
+                    }
+                }
+            }
+            Message::RetryPendingUpdate => {
+                if self.downloading_update {
+                    return Task::none();
+                }
+                if self.staged_update.is_some() {
+                    return self.try_apply_staged_update();
+                }
+                if let Some(release) = self.pending_update.take() {
+                    return self.begin_update(release);
+                }
                 Task::none()
             }
             Message::UpdateManifest { force } => {
@@ -3074,6 +3154,10 @@ impl App {
 
         if self.config.release.check {
             subscriptions.push(iced::time::every(Duration::from_secs(60 * 60 * 24)).map(|_| Message::CheckAppRelease));
+        }
+
+        if (self.pending_update.is_some() || self.staged_update.is_some()) && !self.downloading_update {
+            subscriptions.push(iced::time::every(Duration::from_secs(60)).map(|_| Message::RetryPendingUpdate));
         }
 
         if self.config.schedule.enabled && !self.os_schedule_active {

@@ -30,6 +30,7 @@ pub enum Event {
     Theme(Theme),
     Language(Language),
     CheckRelease(bool),
+    AutoInstallRelease(bool),
     BackupTarget(String),
     RestoreSource(String),
     Root(EditAction),
@@ -138,11 +139,17 @@ pub struct Release {
     /// Whether to check for new releases.
     /// If enabled, Ludusavi will check at most once every 24 hours.
     pub check: bool,
+    /// Whether to download and install fork updates automatically (Windows).
+    /// Updates are verified against the release's SHA-256 before installation.
+    pub auto_install: bool,
 }
 
 impl Default for Release {
     fn default() -> Self {
-        Self { check: true }
+        Self {
+            check: true,
+            auto_install: true,
+        }
     }
 }
 
@@ -2272,7 +2279,7 @@ mod tests {
         assert_eq!(
             Config {
                 runtime: Default::default(),
-                release: Release { check: true },
+                release: Release { check: true, auto_install: true },
                 manifest: ManifestConfig {
                     url: Some(s("example.com")),
                     enable: true,
@@ -2382,6 +2389,7 @@ runtime:
   networkSecurity: safe
 release:
   check: true
+  autoInstall: true
 manifest:
   url: example.com
   enable: true
