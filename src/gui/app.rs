@@ -301,13 +301,11 @@ impl App {
         if self.downloading_update {
             return Task::none();
         }
-        if !self.operation.idle() || !self.modals.is_empty() {
-            // Never interrupt a backup/restore; retry once the app is idle.
-            log::debug!(
-                "Update deferred: idle={} modals={}",
-                self.operation.idle(),
-                self.modals.len()
-            );
+        if !self.operation.idle() {
+            // Never interrupt a running backup/restore; retry once idle.
+            // Dialogs must not block updates: startup modals (e.g. missing-root
+            // confirmation) would otherwise defer an unattended update forever.
+            log::debug!("Update deferred: operation not idle");
             self.pending_update = Some(release);
             return Task::none();
         }
@@ -322,7 +320,7 @@ impl App {
     }
 
     fn try_apply_staged_update(&mut self) -> Task<Message> {
-        if !self.operation.idle() || !self.modals.is_empty() {
+        if !self.operation.idle() {
             return Task::none();
         }
         let Some(staged) = self.staged_update.take() else {
