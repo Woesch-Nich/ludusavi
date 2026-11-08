@@ -126,7 +126,9 @@ pub enum Message {
     },
     CheckAppRelease,
     CheckSchedule,
-    AppReleaseChecked(Result<crate::metadata::Release, String>),
+    AppReleaseChecked(Result<crate::metadata::ForkRelease, String>),
+    UpdateStaged(Result<crate::gui::update::StagedUpdate, String>),
+    RetryPendingUpdate,
     UpdateManifest {
         force: bool,
     },

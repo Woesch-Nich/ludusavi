@@ -1,0 +1,174 @@
+name: Sync upstream and release
+
+# Keeps the fork current: rebases the scheduler patch (and any other fork
+# commits) onto upstream master, builds, and publishes a new scheduler release.
+# Runs daily and on demand. If the rebase conflicts or the build fails, nothing
+# is pushed/published and an issue is opened for manual attention.
+
+on:
+  schedule:
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  issues: write
+
+jobs:
+  sync-and-release:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout fork branch
+        uses: actions/checkout@v4
+        with:
+          ref: daily-scheduler
+          fetch-depth: 0
+
+      - name: Fetch upstream
+        shell: bash
+        run: |
+          git remote add upstream https://github.com/mtkennerly/ludusavi.git
+          git fetch upstream master
+
+      - name: Check for new upstream commits
+        id: check
+        shell: bash
+        run: |
+          if git merge-base --is-ancestor upstream/master HEAD; then
+            echo "up_to_date=true" >> "$GITHUB_OUTPUT"
+            echo "Already up to date with upstream master."
+          else
+            echo "up_to_date=false" >> "$GITHUB_OUTPUT"
+            echo "base=$(git merge-base HEAD upstream/master)" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Rebase fork patches onto upstream master
+        if: steps.check.outputs.up_to_date == 'false'
+        id: rebase
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git rebase upstream/master; then
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          else
+            git rebase --abort
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Report rebase conflict
+        if: steps.check.outputs.up_to_date == 'false' && steps.rebase.outputs.ok == 'false'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TITLE="Upstream sync needs manual attention"
+          BODY="The automatic rebase of daily-scheduler onto upstream master failed with conflicts. A manual rebase is required; the last published release remains the latest."
+          NUM=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --search "$TITLE in:title" --json number --jq '.[0].number')
+          if [ -n "$NUM" ]; then
+            gh issue comment "$NUM" --repo "$GITHUB_REPOSITORY" --body "$BODY"
+          else
+            gh issue create --repo "$GITHUB_REPOSITORY" --title "$TITLE" --body "$BODY"
+          fi
+
+      - name: Install Rust
+        if: steps.rebase.outputs.ok == 'true'
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        if: steps.rebase.outputs.ok == 'true'
+        uses: Swatinem/rust-cache@v2
+
+      - name: Compute next release tag
+        if: steps.rebase.outputs.ok == 'true'
+        id: tag
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          LATEST=$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName 2>/dev/null || echo "")
+          N=$(echo "$LATEST" | sed -n 's/.*-scheduler\.\([0-9][0-9]*\)$/\1/p')
+          N=${N:-0}
+          VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          TAG="v${VERSION}-scheduler.$((N + 1))"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "Next tag: $TAG"
+
+      - name: Build
+        if: steps.rebase.outputs.ok == 'true'
+        shell: bash
+        env:
+          LUDUSAVI_RELEASE_TAG: ${{ steps.tag.outputs.tag }}
+        run: cargo build --release
+
+      - name: Report build failure
+        if: failure() && steps.rebase.outputs.ok == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TITLE="Upstream sync needs manual attention"
+          BODY="The rebased fork compiled unsuccessfully on CI. Nothing was pushed or published; the last good release remains the latest. See the failed workflow run for details."
+          NUM=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --search "$TITLE in:title" --json number --jq '.[0].number')
+          if [ -n "$NUM" ]; then
+            gh issue comment "$NUM" --repo "$GITHUB_REPOSITORY" --body "$BODY"
+          else
+            gh issue create --repo "$GITHUB_REPOSITORY" --title "$TITLE" --body "$BODY"
+          fi
+
+      - name: Package and checksum
+        if: steps.rebase.outputs.ok == 'true'
+        id: package
+        shell: pwsh
+        run: |
+          $tag = "${{ steps.tag.outputs.tag }}"
+          $zip = "ludusavi-$tag-windows-x64.zip"
+          Compress-Archive -Path 'target\release\ludusavi.exe','LICENSE','NOTICE.md','README.md' -DestinationPath $zip -Force
+          $hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
+          "$hash  $zip" | Out-File -Encoding ascii "$zip.sha256"
+          "zip=$zip" | Out-File -Append -Encoding utf8 $env:GITHUB_OUTPUT
+
+      - name: Push branch and tag
+        if: steps.rebase.outputs.ok == 'true'
+        shell: bash
+        run: |
+          git push --force-with-lease origin daily-scheduler
+          git tag "${{ steps.tag.outputs.tag }}"
+          git push origin "${{ steps.tag.outputs.tag }}"
+
+      - name: Write release notes
+        if: steps.rebase.outputs.ok == 'true'
+        shell: bash
+        run: |
+          {
+            echo "## Automatic upstream sync"
+            echo ""
+            echo "Scheduler fork rebased onto upstream master @ \`$(git rev-parse --short upstream/master)\`."
+            echo ""
+            echo "### Upstream changes included"
+            echo '```'
+            git log --oneline "${{ steps.check.outputs.base }}..upstream/master"
+            echo '```'
+            echo ""
+            echo "### Credits"
+            echo "- Upstream Ludusavi: **Matthew T. Kennerly (mtkennerly)** and contributors - https://github.com/mtkennerly/ludusavi - MIT license."
+            echo "- Game-save data: [Ludusavi Manifest](https://github.com/mtkennerly/ludusavi-manifest) and [PCGamingWiki](https://www.pcgamingwiki.com/wiki/Home) contributors."
+            echo "- Fork modifications: **Woesch-Nich** and contributors - MIT license. See NOTICE.md."
+            echo ""
+            echo "This fork is not affiliated with or endorsed by the upstream project."
+            echo ""
+            echo "Windows x64 build. The fork's auto-updater verifies the zip against the attached .sha256 before installing."
+          } > RELEASE_NOTES.md
+
+      - name: Publish release
+        if: steps.rebase.outputs.ok == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ steps.tag.outputs.tag }}" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target daily-scheduler \
+            --title "${{ steps.tag.outputs.tag }}: upstream sync" \
+            --notes-file RELEASE_NOTES.md \
+            "${{ steps.package.outputs.zip }}" "${{ steps.package.outputs.zip }}.sha256"

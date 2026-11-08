@@ -293,6 +293,10 @@ restore-specific-game =
 
 new-version-check = Check for application updates automatically
 new-version-available = An application update is available: {$version}. Would you like to view the release notes?
+install-updates-automatically = Install fork updates automatically (download, verify, and restart)
+downloading-update = Downloading update {$tag}...
+update-failed = Update failed: {$error}
+update-restarting = Installing update {$tag} - restarting...
 
 custom-game-will-override = This custom game overrides a manifest entry
 custom-game-will-extend = This custom game extends a manifest entry

@@ -1491,6 +1491,28 @@ impl Translator {
         translate_args("new-version-available", &args)
     }
 
+    pub fn install_updates_automatically(&self) -> String {
+        translate("install-updates-automatically")
+    }
+
+    pub fn downloading_update(&self, tag: &str) -> String {
+        let mut args = FluentArgs::new();
+        args.set("tag", tag);
+        translate_args("downloading-update", &args)
+    }
+
+    pub fn update_failed(&self, error: &str) -> String {
+        let mut args = FluentArgs::new();
+        args.set("error", error);
+        translate_args("update-failed", &args)
+    }
+
+    pub fn update_restarting(&self, tag: &str) -> String {
+        let mut args = FluentArgs::new();
+        args.set("tag", tag);
+        translate_args("update-restarting", &args)
+    }
+
     pub fn custom_game_will_override(&self) -> String {
         translate("custom-game-will-override")
     }
