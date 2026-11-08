@@ -21,6 +21,7 @@ pub struct Cache {
     pub backup: Backup,
     pub restore: Restore,
     pub schedule: Schedule,
+    pub upstream: Upstream,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -65,6 +66,20 @@ pub struct Restore {
 pub struct Schedule {
     /// Last local date on which a scheduled backup was started.
     pub last_run: Option<chrono::NaiveDate>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct Upstream {
+    pub checked: chrono::DateTime<chrono::Utc>,
+    pub ahead: u64,
+}
+
+impl Upstream {
+    pub fn should_check(&self) -> bool {
+        let now = chrono::offset::Utc::now();
+        now.signed_duration_since(self.checked).num_hours() >= 24
+    }
 }
 
 impl ResourceFile for Cache {

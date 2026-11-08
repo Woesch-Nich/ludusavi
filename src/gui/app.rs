@@ -1546,6 +1546,16 @@ impl App {
             }))
         }
 
+        if config.release.check && cache.upstream.should_check() {
+            if let Some(base) = crate::prelude::UPSTREAM_BASE {
+                let security = config.runtime.network_security;
+                commands.push(Task::future(async move {
+                    let result = crate::metadata::UpstreamCommits::fetch(base, security).await;
+                    Message::UpstreamCommitsChecked(result.map_err(|x| x.to_string()))
+                }))
+            }
+        }
+
         let os_schedule_active = super::schedule::apply(&config).unwrap_or_else(|err| {
             log::warn!("Failed to synchronize the OS backup schedule: {err}");
             false
@@ -2142,6 +2152,37 @@ impl App {
                 task.unwrap_or_else(Task::none)
             }
             Message::CheckSchedule => self.check_schedule(),
+            Message::CheckUpstreamCommits => {
+                if !self.cache.upstream.should_check() {
+                    return Task::none();
+                }
+                let Some(base) = crate::prelude::UPSTREAM_BASE else {
+                    return Task::none();
+                };
+                let security = self.config.runtime.network_security;
+                Task::future(async move {
+                    let result = crate::metadata::UpstreamCommits::fetch(base, security).await;
+                    Message::UpstreamCommitsChecked(result.map_err(|x| x.to_string()))
+                })
+            }
+            Message::UpstreamCommitsChecked(outcome) => {
+                self.cache.upstream.checked = chrono::offset::Utc::now();
+                match outcome {
+                    Ok(status) => {
+                        self.cache.upstream.ahead = status.ahead;
+                        self.save_cache();
+                        log::debug!("Upstream commit check: {} new commits ({})", status.ahead, status.url);
+                        if status.ahead > 0 {
+                            self.timed_notification =
+                                Some(Notification::new(TRANSLATOR.upstream_commits_available(status.ahead)));
+                        }
+                    }
+                    Err(e) => {
+                        log::warn!("Upstream commit check failed: {e:?}");
+                    }
+                }
+                Task::none()
+            }
             Message::CheckAppRelease => {
                 if !self.cache.should_check_app_update() {
                     return Task::none();
@@ -3164,6 +3205,10 @@ impl App {
 
         if self.config.release.check {
             subscriptions.push(iced::time::every(Duration::from_secs(60 * 60 * 24)).map(|_| Message::CheckAppRelease));
+            if crate::prelude::UPSTREAM_BASE.is_some() {
+                subscriptions
+                    .push(iced::time::every(Duration::from_secs(60 * 60 * 24)).map(|_| Message::CheckUpstreamCommits));
+            }
         }
 
         if (self.pending_update.is_some() || self.staged_update.is_some()) && !self.downloading_update {

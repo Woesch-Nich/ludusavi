@@ -125,6 +125,8 @@ pub enum Message {
         event: config::Event,
     },
     CheckAppRelease,
+    CheckUpstreamCommits,
+    UpstreamCommitsChecked(Result<crate::metadata::UpstreamCommits, String>),
     CheckSchedule,
     AppReleaseChecked(Result<crate::metadata::ForkRelease, String>),
     UpdateStaged(Result<crate::gui::update::StagedUpdate, String>),
