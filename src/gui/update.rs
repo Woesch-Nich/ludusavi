@@ -85,88 +85,79 @@ pub async fn download_and_stage(release: &ForkRelease, security: Security) -> Re
 
 /// Replace the running executable with the staged one and restart.
 ///
-/// The current exe is kept as `<exe>.prev`. A detached helper waits for this
-/// process to exit, swaps the file (retrying while another Ludusavi process —
-/// e.g. a scheduled backup — still holds it), restarts with the same arguments,
-/// and rolls back to the previous exe if the new one exits immediately.
+/// Uses the native Windows rename trick: a running executable may be renamed
+/// (though not deleted/overwritten). The app renames itself to `<exe>.old`,
+/// moves the verified new exe into place, and spawns it with the same
+/// arguments. If the new process exits immediately, the previous exe is
+/// restored and restarted. No helper scripts or PowerShell are involved.
 #[cfg(target_os = "windows")]
 pub fn apply_and_restart(staged: &StagedUpdate) -> Result<(), String> {
-    use base64::prelude::*;
+    use std::process::Command;
 
     let target = std::env::current_exe().map_err(|e| e.to_string())?;
-    let backup = std::path::PathBuf::from(format!("{}.prev", target.display()));
-    std::fs::copy(&target, &backup).map_err(|e| format!("could not back up the current exe: {e}"))?;
-
-    let working_dir = target
-        .parent()
-        .map(|p| p.display().to_string())
-        .unwrap_or_else(|| ".".to_string());
+    let old = std::path::PathBuf::from(format!("{}.old", target.display()));
+    let working_dir = target.parent().map(|p| p.to_path_buf()).unwrap_or_default();
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let args_literal = if args.is_empty() {
-        String::new()
-    } else {
-        format!(
-            "-ArgumentList {}",
-            args.iter()
-                .map(|a| ps_quote(a))
-                .collect::<Vec<_>>()
-                .join(",")
-        )
+
+    // Leftover from a previous successful update: best-effort removal.
+    let _ = std::fs::remove_file(&old);
+
+    // Rename the running exe out of the way (allowed on Windows), then move
+    // the staged exe into its place. Roll back if the move fails.
+    std::fs::rename(&target, &old).map_err(|e| format!("could not rename the running exe: {e}"))?;
+    if let Err(e) = std::fs::rename(&staged.new_exe, &target) {
+        let _ = std::fs::rename(&old, &target);
+        return Err(format!("could not move the new exe into place: {e}"));
+    }
+
+    let spawn = |exe: &std::path::Path| -> Result<std::process::Child, String> {
+        Command::new(exe)
+            .args(&args)
+            .current_dir(&working_dir)
+            .spawn()
+            .map_err(|e| e.to_string())
     };
 
-    let script = format!(
-        r#"
-$ErrorActionPreference = 'Stop'
-$targetPid = {pid}
-$new = {new}
-$target = {target}
-$backup = {backup}
-$wd = {wd}
-if ($targetPid -gt 0) {{
-    Wait-Process -Id $targetPid -Timeout 120 -ErrorAction SilentlyContinue
-}}
-$ok = $false
-for ($i = 0; $i -lt 90; $i++) {{
-    try {{
-        Copy-Item -LiteralPath $new -Destination $target -Force
-        $ok = $true
-        break
-    }} catch {{
-        Start-Sleep -Seconds 2
-    }}
-}}
-if (-not $ok) {{ exit 1 }}
-$p = Start-Process -FilePath $target {args_literal} -WorkingDirectory $wd -PassThru
-Start-Sleep -Seconds 8
-if ($p.HasExited) {{
-    Copy-Item -LiteralPath $backup -Destination $target -Force
-    Start-Process -FilePath $target {args_literal} -WorkingDirectory $wd
-}}
-Remove-Item -LiteralPath $new -Force -ErrorAction SilentlyContinue
-"#,
-        pid = std::process::id(),
-        new = ps_quote(&staged.new_exe.display().to_string()),
-        target = ps_quote(&target.display().to_string()),
-        backup = ps_quote(&backup.display().to_string()),
-        wd = ps_quote(&working_dir),
-        args_literal = args_literal,
-    );
+    let mut child = match spawn(&target) {
+        Ok(c) => c,
+        Err(e) => {
+            // Restore the previous exe and try to restart it.
+            let _ = std::fs::remove_file(&target);
+            let _ = std::fs::rename(&old, &target);
+            let _ = spawn(&target);
+            return Err(format!("new exe failed to start (rolled back): {e}"));
+        }
+    };
 
-    let utf16: Vec<u8> = script.encode_utf16().flat_map(|c| c.to_le_bytes()).collect();
-    std::process::Command::new("powershell")
-        .args(["-NoProfile", "-NonInteractive", "-EncodedCommand", &BASE64_STANDARD.encode(utf16)])
-        .spawn()
-        .map_err(|e| e.to_string())?;
-
+    // Give the new build a few seconds; if it dies immediately, roll back.
+    for _ in 0..10 {
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                log::warn!("Updated exe exited immediately ({status}); rolling back");
+                let _ = std::fs::remove_file(&target);
+                let _ = std::fs::rename(&old, &target);
+                let _ = spawn(&target);
+                return Err(format!("new exe exited immediately ({status}); rolled back"));
+            }
+            Ok(None) => {}
+            Err(e) => return Err(e.to_string()),
+        }
+    }
     Ok(())
+}
+
+/// Remove the previous executable left behind by a successful update.
+/// Best-effort; called once at startup.
+pub fn cleanup_previous_update() {
+    #[cfg(target_os = "windows")]
+    if let Ok(exe) = std::env::current_exe() {
+        let old = std::path::PathBuf::from(format!("{}.old", exe.display()));
+        let _ = std::fs::remove_file(old);
+    }
 }
 
 #[cfg(not(target_os = "windows"))]
 pub fn apply_and_restart(_staged: &StagedUpdate) -> Result<(), String> {
     Err("automatic installation is currently only supported on Windows".to_string())
-}
-
-#[cfg(target_os = "windows")]
-fn ps_quote(value: &str) -> String {
-    format!("'{}'", value.replace('\'', "''"))
 }

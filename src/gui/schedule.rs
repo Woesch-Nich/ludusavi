@@ -2,6 +2,9 @@
 //!
 //! The GUI setting is authoritative, but the actual trigger is registered with
 //! the operating system so backups still run when the Ludusavi window is closed.
+//!
+//! On Windows this uses plain `schtasks.exe` with a readable task XML file —
+//! no PowerShell, no encoded commands.
 
 use ludusavi::resource::config::Config;
 
@@ -22,7 +25,6 @@ pub fn apply(config: &Config) -> Result<bool, String> {
 
 #[cfg(target_os = "windows")]
 mod windows {
-    use base64::prelude::*;
     use ludusavi::{prelude::app_dir, resource::config::Config};
 
     const TASK_NAME: &str = "Ludusavi Auto Backup";
@@ -39,11 +41,11 @@ mod windows {
             return Ok(false);
         };
 
-        register_task(&time.format("%H:%M").to_string())?;
+        register_task(&time)?;
         Ok(true)
     }
 
-    fn register_task(time: &str) -> Result<(), String> {
+    fn register_task(time: &chrono::NaiveTime) -> Result<(), String> {
         let exe = std::env::current_exe().map_err(|e| e.to_string())?;
         let exe_string = exe.display().to_string();
         let working_dir = exe
@@ -51,59 +53,103 @@ mod windows {
             .map(|p| p.display().to_string())
             .unwrap_or_else(|| ".".to_string());
         let config_dir = app_dir().render();
+        let arguments = format!("--config \"{}\" backup --force", config_dir.replace('"', ""));
 
-        // The scheduled action uses the same config directory as this GUI instance.
-        let arguments = format!("--config \"{}\" backup --force", escape_cmd_argument(&config_dir));
+        let user = format!(
+            "{}\\{}",
+            std::env::var("USERDOMAIN").unwrap_or_else(|_| ".".to_string()),
+            std::env::var("USERNAME").map_err(|_| "USERNAME environment variable not set".to_string())?
+        );
+        let start_boundary = chrono::Local::now()
+            .date_naive()
+            .and_time(*time)
+            .format("%Y-%m-%dT%H:%M:%S")
+            .to_string();
 
-        let script = format!(
-            r#"
-$ErrorActionPreference = 'Stop'
-$name = {name}
-$exe = {exe}
-$workingDir = {working_dir}
-$arguments = {arguments}
-$time = {time}
-$action = New-ScheduledTaskAction -Execute $exe -Argument $arguments -WorkingDirectory $workingDir
-$trigger = New-ScheduledTaskTrigger -Daily -At $time
-$settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Hours 2)
-$principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Limited
-Register-ScheduledTask -TaskName $name -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Description 'Daily Ludusavi save backup, managed from the Ludusavi settings screen.' -Force | Out-Null
+        let xml = format!(
+            r#"<?xml version="1.0" encoding="UTF-8"?>
+<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <RegistrationInfo>
+    <Description>Daily Ludusavi save backup, managed from the Ludusavi settings screen.</Description>
+  </RegistrationInfo>
+  <Triggers>
+    <CalendarTrigger>
+      <StartBoundary>{start_boundary}</StartBoundary>
+      <Enabled>true</Enabled>
+      <ScheduleByDay>
+        <DaysInterval>1</DaysInterval>
+      </ScheduleByDay>
+    </CalendarTrigger>
+  </Triggers>
+  <Principals>
+    <Principal id="Author">
+      <UserId>{user}</UserId>
+      <LogonType>InteractiveToken</LogonType>
+      <RunLevel>LeastPrivilege</RunLevel>
+    </Principal>
+  </Principals>
+  <Settings>
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+    <AllowHardTerminate>true</AllowHardTerminate>
+    <StartWhenAvailable>true</StartWhenAvailable>
+    <RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable>
+    <IdleSettings>
+      <StopOnIdleEnd>false</StopOnIdleEnd>
+      <RestartOnIdle>false</RestartOnIdle>
+    </IdleSettings>
+    <AllowStartOnDemand>true</AllowStartOnDemand>
+    <Enabled>true</Enabled>
+    <Hidden>false</Hidden>
+    <RunOnlyIfIdle>false</RunOnlyIfIdle>
+    <WakeToRun>false</WakeToRun>
+    <ExecutionTimeLimit>PT2H</ExecutionTimeLimit>
+    <Priority>7</Priority>
+  </Settings>
+  <Actions Context="Author">
+    <Exec>
+      <Command>{command}</Command>
+      <Arguments>{arguments}</Arguments>
+      <WorkingDirectory>{working_dir}</WorkingDirectory>
+    </Exec>
+  </Actions>
+</Task>
 "#,
-            name = ps_quote(TASK_NAME),
-            exe = ps_quote(&exe_string),
-            working_dir = ps_quote(&working_dir),
-            arguments = ps_quote(&arguments),
-            time = ps_quote(time),
+            start_boundary = start_boundary,
+            user = xml_escape(&user),
+            command = xml_escape(&exe_string),
+            arguments = xml_escape(&arguments),
+            working_dir = xml_escape(&working_dir),
         );
 
-        run_powershell(&script)
+        let xml_path = std::env::temp_dir().join("ludusavi-task.xml");
+        std::fs::write(&xml_path, xml).map_err(|e| e.to_string())?;
+        let result = run_schtasks(&[
+            "/Create",
+            "/TN",
+            TASK_NAME,
+            "/XML",
+            &xml_path.display().to_string(),
+            "/F",
+        ]);
+        let _ = std::fs::remove_file(&xml_path);
+        result
     }
 
     fn delete_task() -> Result<(), String> {
-        let script = format!(
-            r#"
-$ErrorActionPreference = 'Stop'
-$name = {name}
-$task = Get-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue
-if ($task) {{
-    Unregister-ScheduledTask -TaskName $name -Confirm:$false
-}}
-"#,
-            name = ps_quote(TASK_NAME),
-        );
-
-        run_powershell(&script)
+        match run_schtasks(&["/Delete", "/TN", TASK_NAME, "/F"]) {
+            Ok(()) => Ok(()),
+            Err(e) if e.contains("cannot find") => Ok(()),
+            Err(e) => Err(e),
+        }
     }
 
-    fn run_powershell(script: &str) -> Result<(), String> {
-        let utf16: Vec<u8> = script.encode_utf16().flat_map(|c| c.to_le_bytes()).collect();
-        let encoded = BASE64_STANDARD.encode(utf16);
-
-        let output = std::process::Command::new("powershell")
-            .args(["-NoProfile", "-NonInteractive", "-EncodedCommand", &encoded])
+    fn run_schtasks(args: &[&str]) -> Result<(), String> {
+        let output = std::process::Command::new("schtasks")
+            .args(args)
             .output()
             .map_err(|e| e.to_string())?;
-
         if output.status.success() {
             Ok(())
         } else {
@@ -113,11 +159,12 @@ if ($task) {{
         }
     }
 
-    fn ps_quote(value: &str) -> String {
-        format!("'{}'", value.replace('\'', "''"))
-    }
-
-    fn escape_cmd_argument(value: &str) -> String {
-        value.replace('"', "\\\"")
+    fn xml_escape(value: &str) -> String {
+        value
+            .replace('&', "&amp;")
+            .replace('<', "&lt;")
+            .replace('>', "&gt;")
+            .replace('"', "&quot;")
+            .replace('\'', "&apos;")
     }
 }
