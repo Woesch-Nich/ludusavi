@@ -19,6 +19,9 @@ pub static VARIANT: Option<&'static str> = option_env!("LUDUSAVI_VARIANT");
 /// Release tag baked in at build time (set by the fork's release pipeline).
 /// The auto-updater compares it against the latest fork release.
 pub static RELEASE_TAG: Option<&'static str> = option_env!("LUDUSAVI_RELEASE_TAG");
+/// Upstream master commit this fork build is based on (baked at build time).
+/// Used to notify the user when upstream has newer commits.
+pub static UPSTREAM_BASE: Option<&'static str> = option_env!("LUDUSAVI_UPSTREAM_BASE");
 pub static CANONICAL_VERSION: LazyLock<(u32, u32, u32)> = LazyLock::new(|| {
     let version_parts: Vec<u32> = env!("CARGO_PKG_VERSION")
         .split('.')

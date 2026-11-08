@@ -261,6 +261,7 @@ install-updates-automatically = Fork-Updates automatisch installieren (laden, pr
 downloading-update = Update {$tag} wird heruntergeladen...
 update-failed = Update fehlgeschlagen: {$error}
 update-restarting = Update {$tag} wird installiert - Neustart...
+upstream-commits-available = Upstream-Ludusavi hat {$count} neue Commits seit diesem Build. Der Fork kann synchronisiert werden, um sie zu übernehmen.
 custom-game-will-override = Dieses benutzerdefinierte Spiel überschreibt einen Manifest-Eintrag
 custom-game-will-extend = Dieses benutzerdefinierte Spiel erweitert einen Manifest-Eintrag
 operation-will-only-include-listed-games = Hiermit werden nur die derzeit aufgelisteten Spiele verarbeitet

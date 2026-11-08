@@ -148,3 +148,40 @@ impl ForkRelease {
         semver::Version::parse(self.tag.trim_start_matches('v')).unwrap_or(semver::Version::new(0, 0, 0))
     }
 }
+
+/// New commits on upstream master since the base commit baked into this build.
+/// Read-only check; nothing is ever published or changed on GitHub.
+#[derive(Debug, Clone)]
+pub struct UpstreamCommits {
+    pub ahead: u64,
+    pub url: String,
+}
+
+impl UpstreamCommits {
+    pub async fn fetch(base: &str, security: Security) -> Result<Self, crate::prelude::AnyError> {
+        #[derive(Debug, serde::Deserialize)]
+        struct Response {
+            ahead_by: u64,
+            html_url: String,
+        }
+
+        let url = format!("https://api.github.com/repos/mtkennerly/ludusavi/compare/{base}...master");
+        let req = get_reqwest_client(security)
+            .get(&url)
+            .header(reqwest::header::USER_AGENT, &*crate::prelude::USER_AGENT);
+        let res = req.send().await?;
+
+        match res.status() {
+            reqwest::StatusCode::OK => {
+                let bytes = res.bytes().await?.to_vec();
+                let raw = String::from_utf8(bytes)?;
+                let parsed: Response = serde_json::from_str(&raw)?;
+                Ok(Self {
+                    ahead: parsed.ahead_by,
+                    url: parsed.html_url,
+                })
+            }
+            code => Err(format!("status code: {code:?}").into()),
+        }
+    }
+}

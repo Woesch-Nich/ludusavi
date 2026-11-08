@@ -1513,6 +1513,12 @@ impl Translator {
         translate_args("update-restarting", &args)
     }
 
+    pub fn upstream_commits_available(&self, count: u64) -> String {
+        let mut args = FluentArgs::new();
+        args.set("count", count.to_string());
+        translate_args("upstream-commits-available", &args)
+    }
+
     pub fn custom_game_will_override(&self) -> String {
         translate("custom-game-will-override")
     }
