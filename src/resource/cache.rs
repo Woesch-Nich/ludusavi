@@ -20,6 +20,7 @@ pub struct Cache {
     pub roots: BTreeSet<Root>,
     pub backup: Backup,
     pub restore: Restore,
+    pub schedule: Schedule,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -57,6 +58,13 @@ pub struct Backup {
 #[serde(default)]
 pub struct Restore {
     pub recent_games: BTreeSet<String>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct Schedule {
+    /// Last local date on which a scheduled backup was started.
+    pub last_run: Option<chrono::NaiveDate>,
 }
 
 impl ResourceFile for Cache {

@@ -116,6 +116,7 @@ pub struct App {
     pending_save: HashMap<SaveKind, Instant>,
     modifiers: keyboard::Modifiers,
     jump_to_game_after_scan: Option<String>,
+    os_schedule_active: bool,
 }
 
 impl App {
@@ -291,6 +292,46 @@ impl App {
         }
 
         Ok(())
+    }
+
+    fn sync_os_schedule(&mut self) {
+        self.os_schedule_active = super::schedule::apply(&self.config).unwrap_or_else(|err| {
+            log::warn!("Failed to synchronize the OS backup schedule: {err}");
+            false
+        });
+    }
+
+    /// Daily scheduled backup: once per local day, at or after the configured
+    /// time, using the same path as the GUI's Back up button (all existing
+    /// backup settings apply). Catches up later in the day if the app was
+    /// closed at the configured time.
+    fn check_schedule(&mut self) -> Task<Message> {
+        if !self.config.schedule.enabled || !self.operation.idle() || !self.modals.is_empty() {
+            return Task::none();
+        }
+        let Some(target) = self.config.schedule.parsed_time() else {
+            return Task::none();
+        };
+        let now = chrono::Local::now();
+        if now.time() < target {
+            return Task::none();
+        }
+        let today = now.date_naive();
+        if self.cache.schedule.last_run == Some(today) {
+            return Task::none();
+        }
+        self.cache.schedule.last_run = Some(today);
+        self.save_cache();
+        log::info!(
+            "Starting scheduled daily backup (configured time: {})",
+            self.config.schedule.time
+        );
+        self.handle_backup(BackupPhase::Start {
+            preview: false,
+            repair: false,
+            jump: false,
+            games: None,
+        })
     }
 
     fn handle_backup(&mut self, phase: BackupPhase) -> Task<Message> {
@@ -1461,6 +1502,11 @@ impl App {
             }))
         }
 
+        let os_schedule_active = super::schedule::apply(&config).unwrap_or_else(|err| {
+            log::warn!("Failed to synchronize the OS backup schedule: {err}");
+            false
+        });
+
         (
             Self {
                 backup_screen: screen::Backup::new(&config, &cache),
@@ -1474,6 +1520,7 @@ impl App {
                 flags,
                 screen,
                 pending_save,
+                os_schedule_active,
                 ..Self::default()
             },
             Task::batch(commands),
@@ -2034,11 +2081,20 @@ impl App {
                             entry.scan_info.only_constructive_backups = value;
                         }
                     }
+                    config::Event::ScheduleEnabled(value) => {
+                        self.config.schedule.enabled = value;
+                        self.sync_os_schedule();
+                    }
+                    config::Event::ScheduleTime(value) => {
+                        self.config.schedule.time = value;
+                        self.sync_os_schedule();
+                    }
                 }
 
                 self.save_config();
                 task.unwrap_or_else(Task::none)
             }
+            Message::CheckSchedule => self.check_schedule(),
             Message::CheckAppRelease => {
                 if !self.cache.should_check_app_update() {
                     return Task::none();
@@ -3018,6 +3074,10 @@ impl App {
 
         if self.config.release.check {
             subscriptions.push(iced::time::every(Duration::from_secs(60 * 60 * 24)).map(|_| Message::CheckAppRelease));
+        }
+
+        if self.config.schedule.enabled && !self.os_schedule_active {
+            subscriptions.push(iced::time::every(Duration::from_secs(30)).map(|_| Message::CheckSchedule));
         }
 
         if self.exiting {

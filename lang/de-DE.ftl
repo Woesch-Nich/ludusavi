@@ -199,6 +199,7 @@ override-max-threads = Max. Threads übergehen
 synchronize-automatically = Automatisch synchronisieren
 prefer-alias-display = Alias statt Originalnamen anzeigen
 skip-unconstructive-backups = Backup überspringen, wenn nur Daten entfernt werden würden, anstatt hinzugefügt oder geändert zu werden
+schedule-daily-backup = Jeden Tag automatisch sichern um
 explanation-for-exclude-store-screenshots = Storespezifische Bildschirmfotos aus Datensicherungen ausschießen
 explanation-for-exclude-cloud-games = Auf diesen Plattformen keine Spiele mit Cloud-Unterstützung sichern
 consider-doing-a-preview =

@@ -593,7 +593,22 @@ pub fn other<'a>(
                                     TRANSLATOR.skip_unconstructive_backups(),
                                     config.backup.only_constructive,
                                     Message::config(config::Event::OnlyConstructiveBackups),
-                                ))),
+                                )))
+                                .push(
+                                    Row::new()
+                                        .spacing(10)
+                                        .align_y(Alignment::Center)
+                                        .push(checkbox(
+                                            TRANSLATOR.schedule_daily_backup(),
+                                            config.schedule.enabled,
+                                            Message::config(config::Event::ScheduleEnabled),
+                                        ))
+                                        .push(
+                                            iced::widget::TextInput::new("13:00", &config.schedule.time)
+                                                .on_input(Message::config(config::Event::ScheduleTime))
+                                                .width(60),
+                                        ),
+                                ),
                         )
                         .class(style::Container::GameListEntry),
                     ),
