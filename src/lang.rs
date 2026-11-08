@@ -1507,6 +1507,12 @@ impl Translator {
         translate_args("update-failed", &args)
     }
 
+    pub fn update_check_failed(&self, error: &str) -> String {
+        let mut args = FluentArgs::new();
+        args.set("error", error);
+        translate_args("update-check-failed", &args)
+    }
+
     pub fn update_restarting(&self, tag: &str) -> String {
         let mut args = FluentArgs::new();
         args.set("tag", tag);

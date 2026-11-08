@@ -296,6 +296,7 @@ new-version-available = An application update is available: {$version}. Would yo
 install-updates-automatically = Install fork updates automatically (download, verify, and restart)
 downloading-update = Downloading update {$tag}...
 update-failed = Update failed: {$error}
+update-check-failed = Update check failed: {$error}
 update-restarting = Installing update {$tag} - restarting...
 upstream-commits-available = Upstream Ludusavi has {$count} new commits since this build was made. The fork can be synced to include them.
 
