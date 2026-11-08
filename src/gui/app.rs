@@ -332,7 +332,9 @@ impl App {
             Ok(()) => std::process::exit(0),
             Err(e) => {
                 log::warn!("Update install failed: {e}");
-                self.timed_notification = Some(Notification::new(TRANSLATOR.update_failed(&e)).expires(30));
+                // Persistent banner; keep the staged exe so the 60s retry can re-apply.
+                self.staged_update = Some(staged);
+                self.timed_notification = Some(Notification::new(TRANSLATOR.update_failed(&e)));
                 Task::none()
             }
         }
@@ -2197,10 +2199,9 @@ impl App {
                 })
             }
             Message::AppReleaseChecked(outcome) => {
-                self.cache.release.checked = chrono::offset::Utc::now();
-
                 match outcome {
                     Ok(release) => {
+                        self.cache.release.checked = chrono::offset::Utc::now();
                         log::debug!(
                             "Update check: latest={} baked={:?} auto_install={} has_sha256={}",
                             release.tag,
@@ -2218,6 +2219,7 @@ impl App {
                                 && cfg!(target_os = "windows")
                                 && release.sha256_url.is_some()
                             {
+                                self.pending_update = Some(release.clone());
                                 return self.begin_update(release);
                             }
                             if previous_latest.as_ref() != Some(&version) {
@@ -2231,6 +2233,9 @@ impl App {
                     }
                     Err(e) => {
                         log::warn!("App update check failed: {e:?}");
+                        // Persistent banner; the check is retried on the next launch/tick
+                        // because cache.release.checked is only stamped on success.
+                        self.timed_notification = Some(Notification::new(TRANSLATOR.update_check_failed(&e)));
                     }
                 }
 
@@ -2240,12 +2245,15 @@ impl App {
                 self.downloading_update = false;
                 match outcome {
                     Ok(staged) => {
+                        self.pending_update = None;
                         self.staged_update = Some(staged);
                         self.try_apply_staged_update()
                     }
                     Err(e) => {
                         log::warn!("Update download failed: {e}");
-                        self.timed_notification = Some(Notification::new(TRANSLATOR.update_failed(&e)).expires(30));
+                        // Persistent banner; pending_update stays set, so the 60s retry
+                        // subscription keeps trying until the download succeeds.
+                        self.timed_notification = Some(Notification::new(TRANSLATOR.update_failed(&e)));
                         Task::none()
                     }
                 }

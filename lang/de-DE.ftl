@@ -260,6 +260,7 @@ new-version-available = Eine Anwendungsaktualisierung ist verfügbar: { $version
 install-updates-automatically = Fork-Updates automatisch installieren (laden, prüfen und neu starten)
 downloading-update = Update {$tag} wird heruntergeladen...
 update-failed = Update fehlgeschlagen: {$error}
+update-check-failed = Update-Prüfung fehlgeschlagen: {$error}
 update-restarting = Update {$tag} wird installiert - Neustart...
 upstream-commits-available = Upstream-Ludusavi hat {$count} neue Commits seit diesem Build. Der Fork kann synchronisiert werden, um sie zu übernehmen.
 custom-game-will-override = Dieses benutzerdefinierte Spiel überschreibt einen Manifest-Eintrag

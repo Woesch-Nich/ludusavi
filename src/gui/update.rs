@@ -124,10 +124,9 @@ pub fn apply_and_restart(staged: &StagedUpdate) -> Result<(), String> {
     let mut child = match spawn(&target) {
         Ok(c) => c,
         Err(e) => {
-            // Restore the previous exe and try to restart it.
+            // Restore the previous exe; this process keeps running it, so no restart here.
             let _ = std::fs::remove_file(&target);
             let _ = std::fs::rename(&old, &target);
-            let _ = spawn(&target);
             return Err(format!("new exe failed to start (rolled back): {e}"));
         }
     };
@@ -140,7 +139,6 @@ pub fn apply_and_restart(staged: &StagedUpdate) -> Result<(), String> {
                 log::warn!("Updated exe exited immediately ({status}); rolling back");
                 let _ = std::fs::remove_file(&target);
                 let _ = std::fs::rename(&old, &target);
-                let _ = spawn(&target);
                 return Err(format!("new exe exited immediately ({status}); rolled back"));
             }
             Ok(None) => {}
