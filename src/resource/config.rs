@@ -2279,7 +2279,10 @@ mod tests {
         assert_eq!(
             Config {
                 runtime: Default::default(),
-                release: Release { check: true, auto_install: true },
+                release: Release {
+                    check: true,
+                    auto_install: true
+                },
                 manifest: ManifestConfig {
                     url: Some(s("example.com")),
                     enable: true,

@@ -2,8 +2,14 @@ name: Sync upstream and release
 
 # Keeps the fork current: rebases the scheduler patch (and any other fork
 # commits) onto upstream master, builds, and publishes a new scheduler release.
-# Runs daily and on demand. If the rebase conflicts or the build fails, nothing
-# is pushed/published and an issue is opened for manual attention.
+# Runs daily and on demand.
+#
+# Issue policy (deliberately conservative):
+# - Nothing is ever pushed/published unless the rebase AND build succeeded.
+# - A failure only creates an issue if the PREVIOUS completed run also failed
+#   (two consecutive failures), so one-off transient CI hiccups stay silent.
+# - At most one open issue; repeat failures comment at most once per week.
+# - A successful sync auto-closes the issue.
 
 on:
   schedule:
@@ -62,25 +68,37 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          # Mark this run as failed regardless, so consecutive-failure counting works.
+          PREV=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow sync-and-release.yml --limit 5 --json conclusion --jq '[.[] | select(.conclusion != null)] | .[0].conclusion // "none"')
+          if [ "$PREV" != "failure" ]; then
+            echo "Previous completed run: $PREV - staying silent on a first/transient failure."
+            exit 1
+          fi
           TITLE="Upstream sync needs manual attention"
-          BODY="The automatic rebase of daily-scheduler onto upstream master failed with conflicts. A manual rebase is required; the last published release remains the latest."
+          BODY="The automatic rebase of daily-scheduler onto upstream master failed with conflicts on two consecutive runs. A manual rebase is required; the last published release remains the latest."
           NUM=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --search "$TITLE in:title" --json number --jq '.[0].number')
           if [ -n "$NUM" ]; then
+            LAST=$(gh issue view "$NUM" --repo "$GITHUB_REPOSITORY" --json comments --jq '.comments[-1].createdAt // empty')
+            if [ -n "$LAST" ] && [ $(( $(date +%s) - $(date -d "$LAST" +%s) )) -lt 604800 ]; then
+              echo "Issue already active and commented within 7 days - not commenting again."
+              exit 1
+            fi
             gh issue comment "$NUM" --repo "$GITHUB_REPOSITORY" --body "$BODY"
           else
             gh issue create --repo "$GITHUB_REPOSITORY" --title "$TITLE" --body "$BODY"
           fi
+          exit 1
 
       - name: Install Rust
-        if: steps.rebase.outputs.ok == 'true'
+        if: success() && steps.rebase.outputs.ok == 'true'
         uses: dtolnay/rust-toolchain@stable
 
       - name: Cache cargo
-        if: steps.rebase.outputs.ok == 'true'
+        if: success() && steps.rebase.outputs.ok == 'true'
         uses: Swatinem/rust-cache@v2
 
       - name: Compute next release tag
-        if: steps.rebase.outputs.ok == 'true'
+        if: success() && steps.rebase.outputs.ok == 'true'
         id: tag
         shell: bash
         env:
@@ -95,7 +113,7 @@ jobs:
           echo "Next tag: $TAG"
 
       - name: Build
-        if: steps.rebase.outputs.ok == 'true'
+        if: success() && steps.rebase.outputs.ok == 'true'
         shell: bash
         env:
           LUDUSAVI_RELEASE_TAG: ${{ steps.tag.outputs.tag }}
@@ -107,17 +125,27 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          PREV=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow sync-and-release.yml --limit 5 --json conclusion --jq '[.[] | select(.conclusion != null)] | .[0].conclusion // "none"')
+          if [ "$PREV" != "failure" ]; then
+            echo "Previous completed run: $PREV - staying silent on a first/transient failure."
+            exit 0
+          fi
           TITLE="Upstream sync needs manual attention"
-          BODY="The rebased fork compiled unsuccessfully on CI. Nothing was pushed or published; the last good release remains the latest. See the failed workflow run for details."
+          BODY="The rebased fork failed to build on two consecutive CI runs. Nothing was pushed or published; the last good release remains the latest. See the failed workflow runs for details."
           NUM=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --search "$TITLE in:title" --json number --jq '.[0].number')
           if [ -n "$NUM" ]; then
+            LAST=$(gh issue view "$NUM" --repo "$GITHUB_REPOSITORY" --json comments --jq '.comments[-1].createdAt // empty')
+            if [ -n "$LAST" ] && [ $(( $(date +%s) - $(date -d "$LAST" +%s) )) -lt 604800 ]; then
+              echo "Issue already active and commented within 7 days - not commenting again."
+              exit 0
+            fi
             gh issue comment "$NUM" --repo "$GITHUB_REPOSITORY" --body "$BODY"
           else
             gh issue create --repo "$GITHUB_REPOSITORY" --title "$TITLE" --body "$BODY"
           fi
 
       - name: Package and checksum
-        if: steps.rebase.outputs.ok == 'true'
+        if: success() && steps.rebase.outputs.ok == 'true'
         id: package
         shell: pwsh
         run: |
@@ -129,7 +157,7 @@ jobs:
           "zip=$zip" | Out-File -Append -Encoding utf8 $env:GITHUB_OUTPUT
 
       - name: Push branch and tag
-        if: steps.rebase.outputs.ok == 'true'
+        if: success() && steps.rebase.outputs.ok == 'true'
         shell: bash
         run: |
           git push --force-with-lease origin daily-scheduler
@@ -137,7 +165,7 @@ jobs:
           git push origin "${{ steps.tag.outputs.tag }}"
 
       - name: Write release notes
-        if: steps.rebase.outputs.ok == 'true'
+        if: success() && steps.rebase.outputs.ok == 'true'
         shell: bash
         run: |
           {
@@ -161,7 +189,7 @@ jobs:
           } > RELEASE_NOTES.md
 
       - name: Publish release
-        if: steps.rebase.outputs.ok == 'true'
+        if: success() && steps.rebase.outputs.ok == 'true'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -172,3 +200,15 @@ jobs:
             --title "${{ steps.tag.outputs.tag }}: upstream sync" \
             --notes-file RELEASE_NOTES.md \
             "${{ steps.package.outputs.zip }}" "${{ steps.package.outputs.zip }}.sha256"
+
+      - name: Close resolved sync issue
+        if: success() && steps.rebase.outputs.ok == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TITLE="Upstream sync needs manual attention"
+          NUM=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --search "$TITLE in:title" --json number --jq '.[0].number')
+          if [ -n "$NUM" ]; then
+            gh issue close "$NUM" --repo "$GITHUB_REPOSITORY" --comment "Resolved automatically: the sync succeeded and ${{ steps.tag.outputs.tag }} was published."
+          fi
