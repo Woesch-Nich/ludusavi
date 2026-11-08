@@ -38,6 +38,7 @@ pub async fn download_and_stage(release: &ForkRelease, security: Security) -> Re
             .text()
             .await?;
         let expected = expected.split_whitespace().next().unwrap_or("").to_ascii_lowercase();
+        log::debug!("Update: expected sha256={expected}");
         if expected.len() != 64 || !expected.chars().all(|c| c.is_ascii_hexdigit()) {
             return Err("invalid .sha256 asset content".into());
         }
@@ -52,11 +53,13 @@ pub async fn download_and_stage(release: &ForkRelease, security: Security) -> Re
             .await?;
 
         let actual = format!("{:x}", Sha256::digest(&zip_bytes));
+        log::debug!("Update: downloaded {} bytes, sha256={actual}", zip_bytes.len());
         if actual != expected {
             return Err(format!("checksum mismatch: expected {expected}, got {actual}").into());
         }
 
         let staging = app_dir().joined("update-staging").as_std_path_buf()?;
+        log::debug!("Update: checksum OK, staging at {}", staging.display());
         std::fs::create_dir_all(&staging)?;
 
         let mut archive = zip::ZipArchive::new(std::io::Cursor::new(zip_bytes))?;
