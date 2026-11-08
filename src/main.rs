@@ -191,6 +191,8 @@ fn main() {
     }
     let debug = args.as_ref().map(|x| x.debug).unwrap_or_default();
 
+    gui::update::cleanup_previous_update();
+
     prepare_winit();
     let logger = prepare_logging(debug);
     #[allow(clippy::useless_asref)]
