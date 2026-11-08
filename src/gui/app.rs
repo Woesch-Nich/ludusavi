@@ -2204,8 +2204,7 @@ impl App {
                     }
                     Err(e) => {
                         log::warn!("Update download failed: {e}");
-                        self.timed_notification =
-                            Some(Notification::new(TRANSLATOR.update_failed(&e)).expires(30));
+                        self.timed_notification = Some(Notification::new(TRANSLATOR.update_failed(&e)).expires(30));
                         Task::none()
                     }
                 }
