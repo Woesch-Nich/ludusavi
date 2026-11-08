@@ -216,6 +216,7 @@ override-max-threads = Override max threads
 synchronize-automatically = Synchronize automatically
 prefer-alias-display = Display alias instead of original name
 skip-unconstructive-backups = Skip backup when data would be removed, but not added or updated
+schedule-daily-backup = Back up automatically every day at
 
 explanation-for-exclude-store-screenshots =
     In backups, exclude store-specific screenshots
