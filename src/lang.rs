@@ -1316,6 +1316,10 @@ impl Translator {
         translate("skip-unconstructive-backups")
     }
 
+    pub fn schedule_daily_backup(&self) -> String {
+        translate("schedule-daily-backup")
+    }
+
     pub fn total_games(&self) -> String {
         translate("total-games")
     }

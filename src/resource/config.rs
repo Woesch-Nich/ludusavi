@@ -99,6 +99,8 @@ pub enum Event {
     CloudPath(String),
     SortCustomGames,
     OnlyConstructiveBackups(bool),
+    ScheduleEnabled(bool),
+    ScheduleTime(String),
 }
 
 /// Settings for `config.yaml`
@@ -118,6 +120,7 @@ pub struct Config {
     pub cloud: Cloud,
     pub apps: Apps,
     pub custom_games: Vec<CustomGame>,
+    pub schedule: ScheduleConfig,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
@@ -1125,6 +1128,32 @@ pub struct BackupConfig {
     pub format: BackupFormats,
     /// Don't create a new backup if there are only removed saves and no new/edited ones.
     pub only_constructive: bool,
+}
+
+/// Daily automatic backup while the GUI is running.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[serde(default, rename_all = "camelCase")]
+pub struct ScheduleConfig {
+    /// Automatically back up once per day at the configured local time.
+    pub enabled: bool,
+    /// Local time of day in HH:MM format (24-hour clock).
+    pub time: String,
+}
+
+impl Default for ScheduleConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            time: "13:00".to_string(),
+        }
+    }
+}
+
+impl ScheduleConfig {
+    /// The configured time of day, if it is valid HH:MM.
+    pub fn parsed_time(&self) -> Option<chrono::NaiveTime> {
+        chrono::NaiveTime::parse_from_str(self.time.trim(), "%H:%M").ok()
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
@@ -2314,6 +2343,7 @@ mod tests {
                         expanded: false,
                     },
                 ],
+                schedule: Default::default(),
             },
             config,
         );
@@ -2438,6 +2468,9 @@ customGames:
     registry: []
     installDir: []
     winePrefix: []
+schedule:
+  enabled: false
+  time: "13:00"
 "#
             .trim(),
             serde_yaml::to_string(&Config {
@@ -2546,6 +2579,7 @@ customGames:
                         expanded: false,
                     },
                 ],
+                schedule: Default::default(),
             })
             .unwrap()
             .trim(),

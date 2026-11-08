@@ -118,6 +118,7 @@ pub enum Message {
         event: config::Event,
     },
     CheckAppRelease,
+    CheckSchedule,
     AppReleaseChecked(Result<crate::metadata::Release, String>),
     UpdateManifest {
         force: bool,

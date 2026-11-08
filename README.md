@@ -1,9 +1,20 @@
 # ![Logo](assets/icon.svg) Ludusavi
+
+> [!NOTE]
+> This repository is a fork of [mtkennerly/ludusavi](https://github.com/mtkennerly/ludusavi),
+> originally created by **Matthew T. Kennerly (mtkennerly)** and contributors.
+> It is not the official upstream project. See [NOTICE.md](NOTICE.md) for credits and licensing.
+>
+> Fork addition: a **built-in daily automatic backup schedule**. On Windows, the GUI setting
+> registers a real OS scheduled task, so backups can run even when the Ludusavi window is closed.
+> Fork builds: [Woesch-Nich/ludusavi releases](https://github.com/Woesch-Nich/ludusavi/releases).
+
 Ludusavi is a tool for backing up your PC video game save data,
 written in [Rust](https://www.rust-lang.org).
 It is cross-platform and supports multiple game stores.
 
 ## Features
+* Built-in daily auto-backup scheduler (this fork; on Windows it runs via Task Scheduler even when the GUI is closed).
 * Ability to back up data from more than 19,000 games plus your own custom entries.
 * Backup and restore for Steam, GOG, Epic, Heroic, Lutris, and other game libraries.
 * Both a graphical interface and command line interface for scripting.
@@ -24,6 +35,26 @@ and your improvements will be incorporated into Ludusavi's data as well.
 
 If you'd like to help translate Ludusavi into other languages,
 [check out the Crowdin project](https://crowdin.com/project/ludusavi).
+
+## Daily automatic backup (fork feature)
+
+In the GUI settings, enable **Back up automatically every day at** and choose a local time in `HH:MM` format.
+
+- On Windows, Ludusavi creates or updates the scheduled task `Ludusavi Auto Backup`.
+- The task runs the normal Ludusavi backup using the same configuration directory as the GUI.
+- Your existing backup path, filters, retention, and constructive-backup behavior are preserved.
+- If the PC is off at the scheduled time, the task is configured to catch up when Windows can run it.
+- Disabling the option removes the scheduled task.
+
+Example config addition:
+
+```yaml
+schedule:
+  enabled: true
+  time: "13:00"
+```
+
+On non-Windows platforms, this fork currently falls back to an in-app timer, which requires the GUI to be running.
 
 ## Demo
 <!-- These anchors are kept for compatibility with old section headers. -->
