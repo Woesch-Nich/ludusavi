@@ -120,6 +120,9 @@ pub struct App {
     pending_update: Option<crate::metadata::ForkRelease>,
     staged_update: Option<crate::gui::update::StagedUpdate>,
     downloading_update: bool,
+    /// Last update error already shown as a banner; retries stay silent while
+    /// the same problem persists, so the user is notified once, not spammed.
+    update_error_shown: Option<String>,
 }
 
 impl App {
@@ -297,7 +300,7 @@ impl App {
         Ok(())
     }
 
-    fn begin_update(&mut self, release: crate::metadata::ForkRelease) -> Task<Message> {
+    fn begin_update(&mut self, release: crate::metadata::ForkRelease, silent: bool) -> Task<Message> {
         if self.downloading_update {
             return Task::none();
         }
@@ -311,7 +314,9 @@ impl App {
         }
         log::debug!("Starting update download: {}", release.tag);
         self.downloading_update = true;
-        self.timed_notification = Some(Notification::new(TRANSLATOR.downloading_update(&release.tag)));
+        if !silent {
+            self.timed_notification = Some(Notification::new(TRANSLATOR.downloading_update(&release.tag)));
+        }
         let security = self.config.runtime.network_security;
         Task::perform(
             async move { crate::gui::update::download_and_stage(&release, security).await },
@@ -332,9 +337,12 @@ impl App {
             Ok(()) => std::process::exit(0),
             Err(e) => {
                 log::warn!("Update install failed: {e}");
-                // Persistent banner; keep the staged exe so the 60s retry can re-apply.
+                // Keep the staged exe so the 60s retry can re-apply; notify once.
                 self.staged_update = Some(staged);
-                self.timed_notification = Some(Notification::new(TRANSLATOR.update_failed(&e)));
+                if self.update_error_shown.as_deref() != Some(e.as_str()) {
+                    self.update_error_shown = Some(e.clone());
+                    self.timed_notification = Some(Notification::new(TRANSLATOR.update_failed(&e)));
+                }
                 Task::none()
             }
         }
@@ -2220,7 +2228,7 @@ impl App {
                                 && release.sha256_url.is_some()
                             {
                                 self.pending_update = Some(release.clone());
-                                return self.begin_update(release);
+                                return self.begin_update(release, false);
                             }
                             if previous_latest.as_ref() != Some(&version) {
                                 let manual = crate::metadata::Release {
@@ -2233,9 +2241,12 @@ impl App {
                     }
                     Err(e) => {
                         log::warn!("App update check failed: {e:?}");
-                        // Persistent banner; the check is retried on the next launch/tick
-                        // because cache.release.checked is only stamped on success.
-                        self.timed_notification = Some(Notification::new(TRANSLATOR.update_check_failed(&e)));
+                        // Notify once; retried on next launch/tick (checked is only
+                        // stamped on success). No banner spam while the problem persists.
+                        if self.update_error_shown.as_deref() != Some(e.as_str()) {
+                            self.update_error_shown = Some(e.clone());
+                            self.timed_notification = Some(Notification::new(TRANSLATOR.update_check_failed(&e)));
+                        }
                     }
                 }
 
@@ -2246,14 +2257,17 @@ impl App {
                 match outcome {
                     Ok(staged) => {
                         self.pending_update = None;
+                        self.update_error_shown = None;
                         self.staged_update = Some(staged);
                         self.try_apply_staged_update()
                     }
                     Err(e) => {
                         log::warn!("Update download failed: {e}");
-                        // Persistent banner; pending_update stays set, so the 60s retry
-                        // subscription keeps trying until the download succeeds.
-                        self.timed_notification = Some(Notification::new(TRANSLATOR.update_failed(&e)));
+                        // Notify once per problem; the 60s retry keeps trying silently.
+                        if self.update_error_shown.as_deref() != Some(e.as_str()) {
+                            self.update_error_shown = Some(e.clone());
+                            self.timed_notification = Some(Notification::new(TRANSLATOR.update_failed(&e)));
+                        }
                         Task::none()
                     }
                 }
@@ -2266,7 +2280,7 @@ impl App {
                     return self.try_apply_staged_update();
                 }
                 if let Some(release) = self.pending_update.take() {
-                    return self.begin_update(release);
+                    return self.begin_update(release, true);
                 }
                 Task::none()
             }
