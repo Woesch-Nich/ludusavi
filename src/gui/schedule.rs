@@ -67,7 +67,7 @@ mod windows {
             .to_string();
 
         let xml = format!(
-            r#"<?xml version="1.0" encoding="UTF-8"?>
+            r#"<?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <RegistrationInfo>
     <Description>Daily Ludusavi save backup, managed from the Ludusavi settings screen.</Description>
@@ -124,7 +124,10 @@ mod windows {
         );
 
         let xml_path = std::env::temp_dir().join("ludusavi-task.xml");
-        std::fs::write(&xml_path, xml).map_err(|e| e.to_string())?;
+        // schtasks.exe expects task XML as UTF-16LE with BOM.
+        let mut bytes = vec![0xFF, 0xFE];
+        bytes.extend(xml.encode_utf16().flat_map(|c| c.to_le_bytes()));
+        std::fs::write(&xml_path, bytes).map_err(|e| e.to_string())?;
         let result = run_schtasks(&[
             "/Create",
             "/TN",

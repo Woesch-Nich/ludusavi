@@ -303,9 +303,15 @@ impl App {
         }
         if !self.operation.idle() || !self.modals.is_empty() {
             // Never interrupt a backup/restore; retry once the app is idle.
+            log::debug!(
+                "Update deferred: idle={} modals={}",
+                self.operation.idle(),
+                self.modals.len()
+            );
             self.pending_update = Some(release);
             return Task::none();
         }
+        log::debug!("Starting update download: {}", release.tag);
         self.downloading_update = true;
         self.timed_notification = Some(Notification::new(TRANSLATOR.downloading_update(&release.tag)));
         let security = self.config.runtime.network_security;
@@ -2156,6 +2162,13 @@ impl App {
 
                 match outcome {
                     Ok(release) => {
+                        log::debug!(
+                            "Update check: latest={} baked={:?} auto_install={} has_sha256={}",
+                            release.tag,
+                            crate::prelude::RELEASE_TAG,
+                            self.config.release.auto_install,
+                            release.sha256_url.is_some()
+                        );
                         let previous_latest = self.cache.release.latest.clone();
                         let version = release.semver();
                         self.cache.release.latest = Some(version.clone());
