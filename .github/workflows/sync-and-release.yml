@@ -40,6 +40,7 @@ jobs:
         id: check
         shell: bash
         run: |
+          echo "upstream_sha=$(git rev-parse upstream/master)" >> "$GITHUB_OUTPUT"
           if git merge-base --is-ancestor upstream/master HEAD; then
             echo "up_to_date=true" >> "$GITHUB_OUTPUT"
             echo "Already up to date with upstream master."
@@ -117,6 +118,7 @@ jobs:
         shell: bash
         env:
           LUDUSAVI_RELEASE_TAG: ${{ steps.tag.outputs.tag }}
+          LUDUSAVI_UPSTREAM_BASE: ${{ steps.check.outputs.upstream_sha }}
         run: cargo build --release
 
       - name: Report build failure
