@@ -69,6 +69,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          # Never let issue reporting break the pipeline: skip gracefully if Issues are off.
+          if ! gh issue list --repo "$GITHUB_REPOSITORY" --limit 1 >/dev/null 2>&1; then
+            echo "Issues are unavailable on this repository; no issue report (the failed run is the signal)."
+            exit 1
+          fi
           # Mark this run as failed regardless, so consecutive-failure counting works.
           PREV=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow sync-and-release.yml --limit 5 --json conclusion --jq '[.[] | select(.conclusion != null)] | .[0].conclusion // "none"')
           if [ "$PREV" != "failure" ]; then
@@ -127,6 +132,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          # Never let issue reporting break the pipeline: skip gracefully if Issues are off.
+          if ! gh issue list --repo "$GITHUB_REPOSITORY" --limit 1 >/dev/null 2>&1; then
+            echo "Issues are unavailable on this repository; no issue report (the failed build is the signal)."
+            exit 0
+          fi
           PREV=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow sync-and-release.yml --limit 5 --json conclusion --jq '[.[] | select(.conclusion != null)] | .[0].conclusion // "none"')
           if [ "$PREV" != "failure" ]; then
             echo "Previous completed run: $PREV - staying silent on a first/transient failure."
@@ -209,6 +219,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          # Must never fail a successful sync just because Issues are unavailable.
+          if ! gh issue list --repo "$GITHUB_REPOSITORY" --limit 1 >/dev/null 2>&1; then
+            echo "Issues are unavailable on this repository; nothing to close."
+            exit 0
+          fi
           TITLE="Upstream sync needs manual attention"
           NUM=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --search "$TITLE in:title" --json number --jq '.[0].number')
           if [ -n "$NUM" ]; then
